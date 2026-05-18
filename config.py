@@ -1,9 +1,0 @@
-DEFAULT_TIMEOUT = 10
-DEFAULT_THREADS = 10
-DEFAULT_OUTPUT_FORMAT = "table"
-
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 APIExtractor"
-}
-
-STATIC_EXTENSIONS = ()

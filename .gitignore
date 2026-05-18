@@ -4,5 +4,10 @@ __pycache__/
 .venv/
 venv/
 
+.gocache/
+.tmp-go-cache/
+
+*.exe
+
 output/*
 !output/.gitkeep
