@@ -6,8 +6,10 @@ venv/
 
 .gocache/
 .tmp-go-cache/
-
+.vscode/
 *.exe
 
 output/*
 !output/.gitkeep
+
+开发规范.md
