@@ -19,16 +19,24 @@ func Run(targetURL string, cfg config.Config) model.ScanResult {
 		return result
 	}
 
-	jsURLs := ExtractJSURLs(html, targetURL, cfg.SameOrigin)
-	jsFiles := FetchJSFiles(jsURLs, cfg)
-	rawCandidates := ExtractAll(html, jsFiles)
+	sourceURLs := ExtractSourceURLs(html, targetURL, cfg.SameOrigin)
+	sourceFiles := FetchSourceFiles(sourceURLs, cfg)
+	rawCandidates := ExtractAll(html, sourceFiles)
 	result.Candidates = NormalizeURLs(rawCandidates, targetURL, cfg.SameOrigin)
 	result.RequestResults = RequestAll(result.Candidates, cfg)
 	result.Analysis = AnalyzeResults(result.RequestResults)
-	result.JSFiles = jsURLs
+	result.JSFiles = collectSourceURLs(sourceFiles)
 	result.Summary = buildSummary(result)
 
 	return result
+}
+
+func collectSourceURLs(files []model.SourceFile) []string {
+	urls := make([]string, 0, len(files))
+	for _, file := range files {
+		urls = append(urls, file.URL)
+	}
+	return urls
 }
 
 // buildSummary 根据扫描结果生成汇总计数。

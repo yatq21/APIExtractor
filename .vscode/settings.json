@@ -1,0 +1,12 @@
+{
+  "go.useLanguageServer": true,
+  "go.gopath": "C:\\Users\\111\\go",
+  "go.goroot": "C:\\Program Files\\Go",
+  "go.toolsEnvVars": {
+    "GOPROXY": "https://proxy.golang.org,direct"
+  },
+  "go.testFlags": ["./..."],
+  "go.formatTool": "gofmt",
+  "editor.formatOnSave": true,
+  "files.eol": "\r\n"
+}

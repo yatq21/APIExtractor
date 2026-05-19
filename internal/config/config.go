@@ -9,6 +9,7 @@ type Config struct {
 	SameOrigin      bool
 	DefaultHeaders  map[string]string
 	StaticExtension map[string]struct{}
+	MaxSourceFiles  int
 }
 
 // Default 返回命令行扫描使用的默认配置。
@@ -17,6 +18,7 @@ func Default() Config {
 		Timeout:      10 * time.Second,
 		OutputFormat: "table",
 		SameOrigin:   true,
+		MaxSourceFiles: 40,
 		DefaultHeaders: map[string]string{
 			"User-Agent": "Mozilla/5.0 APIExtractor-Go",
 		},

@@ -2,9 +2,10 @@ package model
 
 // SourceFile 保存已下载的 JavaScript 源码及其抓取错误。
 type SourceFile struct {
-	URL     string `json:"url"`
-	Content string `json:"content,omitempty"`
-	Error   string `json:"error,omitempty"`
+	URL        string `json:"url"`
+	SourceType string `json:"source_type,omitempty"`
+	Content    string `json:"content,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // RequestResult 记录单个接口请求的响应元信息和响应体预览。
