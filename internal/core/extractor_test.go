@@ -34,6 +34,50 @@ func TestExtractFromTextAddsGraphQLEndpoint(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+func TestExtractFromTextFindsRequestConstructorAndWebSocket(t *testing.T) {
+	text := `
+		const req = new Request("/api/profile");
+		const ws = new WebSocket("wss://example.com/socket");
+	`
+
+	got := ExtractFromText(text)
+	want := []string{
+		"/api/profile",
+		"wss://example.com/socket",
+	}
+
+	assertStringSlice(t, got, want)
+}
+
+func TestExtractFromTextHandlesTemplateLiteralConservatively(t *testing.T) {
+	text := "fetch(`/api/users/${userId}`);\nconst options = { url: `/v1/orders/${orderId}` };"
+
+	got := ExtractFromText(text)
+	want := []string{
+		"/api/users/",
+		"/v1/orders/",
+	}
+
+	assertStringSlice(t, got, want)
+}
+
+func TestExtractFromTextHandlesStringConcatConservatively(t *testing.T) {
+	text := `
+		fetch("/api/" + userId + "/detail");
+		const req = new Request("/auth/token" + suffix);
+		const options = { url: "/rest/report" + query };
+	`
+
+	got := ExtractFromText(text)
+	want := []string{
+		"/api/",
+		"/auth/token",
+		"/rest/report",
+	}
+
+	assertStringSlice(t, got, want)
+}
+
 func assertStringSlice(t *testing.T, got []string, want []string) {
 	t.Helper()
 

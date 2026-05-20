@@ -8,17 +8,20 @@ import (
 )
 
 var (
-	quotedURLPattern       = regexp.MustCompile("(?i)[\"'`]((?:https?:)?//[^\"'`\\s<>]+|/[A-Za-z0-9._~!$&'()*+,;=:@%/?#\\[\\]-]+)[\"'`]")
-	apiKeywordPattern      = regexp.MustCompile("(?i)[\"'`]((?:\\.?\\.?/)?[^\"'`\\s<>]*(?:api|graphql|rest|v[0-9]+)[^\"'`\\s<>]*)[\"'`]")
-	fetchPattern           = regexp.MustCompile("(?is)\\bfetch\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
-	xhrOpenPattern         = regexp.MustCompile("(?is)\\.open\\s*\\(\\s*[\"'`][A-Z]+[\"'`]\\s*,\\s*[\"'`]([^\"'`]+)[\"'`]")
-	axiosPattern           = regexp.MustCompile("(?is)\\baxios(?:\\.[a-z]+)?\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
-	axiosObjectURLPattern  = regexp.MustCompile("(?is)\\baxios\\s*\\(\\s*\\{[^{}]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
-	jqueryAjaxURLPattern   = regexp.MustCompile("(?is)\\$\\.(?:ajax|get|post|getJSON)\\s*\\([^)]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
-	jqueryShortcutPattern  = regexp.MustCompile("(?is)\\$\\.(?:get|post|getJSON)\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
-	requestObjectURLPattern = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
-	graphQLOperationPattern = regexp.MustCompile("(?is)\\b(?:query|mutation)\\s+[A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?\\s*\\{")
-	businessPathPattern     = regexp.MustCompile(`(?i)^/(?:v[0-9]+|admin|auth|user|users|account|accounts|order|orders|pay|payment|member|members|tenant|tenants|system|manage|backend|console)(?:/|$)`)
+	quotedURLPattern          = regexp.MustCompile("(?i)[\"'`]((?:https?:)?//[^\"'`\\s<>]+|/[A-Za-z0-9._~!$&'()*+,;=:@%/?#\\[\\]-]+)[\"'`]")
+	apiKeywordPattern         = regexp.MustCompile("(?i)[\"'`]((?:\\.?\\.?/)?[^\"'`\\s<>]*(?:api|graphql|rest|v[0-9]+)[^\"'`\\s<>]*)[\"'`]")
+	fetchPattern              = regexp.MustCompile("(?is)\\bfetch\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	requestConstructorPattern = regexp.MustCompile("(?is)\\bnew\\s+Request\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	webSocketPattern          = regexp.MustCompile("(?is)\\bnew\\s+WebSocket\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	xhrOpenPattern            = regexp.MustCompile("(?is)\\.open\\s*\\(\\s*[\"'`][A-Z]+[\"'`]\\s*,\\s*[\"'`]([^\"'`]+)[\"'`]")
+	axiosPattern              = regexp.MustCompile("(?is)\\baxios(?:\\.[a-z]+)?\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	axiosObjectURLPattern     = regexp.MustCompile("(?is)\\baxios\\s*\\(\\s*\\{[^{}]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	jqueryAjaxURLPattern      = regexp.MustCompile("(?is)\\$\\.(?:ajax|get|post|getJSON)\\s*\\([^)]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	jqueryShortcutPattern     = regexp.MustCompile("(?is)\\$\\.(?:get|post|getJSON)\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
+	requestObjectURLPattern   = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	requestObjectExprPattern  = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*([^,\\n}]+)")
+	graphQLOperationPattern   = regexp.MustCompile("(?is)\\b(?:query|mutation)\\s+[A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?\\s*\\{")
+	businessPathPattern       = regexp.MustCompile(`(?i)^/(?:v[0-9]+|admin|auth|user|users|account|accounts|order|orders|pay|payment|member|members|tenant|tenants|system|manage|backend|console)(?:/|$)`)
 )
 
 // ExtractFromText 从 HTML、JavaScript、source map 或 JSON 文本中提取疑似 API 路径或 URL。
@@ -36,12 +39,15 @@ func ExtractFromText(text string) []string {
 	}
 
 	mergeMatches(fetchPattern.FindAllStringSubmatch(text, -1))
+	mergeMatches(requestConstructorPattern.FindAllStringSubmatch(text, -1))
+	mergeMatches(webSocketPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(xhrOpenPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(axiosPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(axiosObjectURLPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(jqueryAjaxURLPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(jqueryShortcutPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(requestObjectURLPattern.FindAllStringSubmatch(text, -1))
+	mergeMatches(requestObjectExprPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(quotedURLPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(apiKeywordPattern.FindAllStringSubmatch(text, -1))
 
@@ -89,6 +95,7 @@ func addCandidate(raw string, seen map[string]struct{}, results *[]string) {
 
 func cleanCandidate(raw string) string {
 	candidate := strings.TrimSpace(raw)
+	candidate = extractStaticPrefix(candidate)
 	candidate = strings.Trim(candidate, "\"'`")
 	candidate = strings.ReplaceAll(candidate, `\/`, `/`)
 	candidate = strings.ReplaceAll(candidate, `\u002f`, `/`)
@@ -98,6 +105,20 @@ func cleanCandidate(raw string) string {
 		candidate = strings.TrimPrefix(candidate, ".")
 	}
 	return candidate
+}
+
+func extractStaticPrefix(raw string) string {
+	candidate := strings.TrimSpace(raw)
+
+	if idx := strings.Index(candidate, "${"); idx >= 0 {
+		candidate = candidate[:idx]
+	}
+	if idx := strings.Index(candidate, "+"); idx >= 0 {
+		candidate = candidate[:idx]
+	}
+
+	candidate = strings.TrimSpace(candidate)
+	return strings.Trim(candidate, "\"'`")
 }
 
 func looksLikeAPI(candidate string) bool {
@@ -110,6 +131,9 @@ func looksLikeAPI(candidate string) bool {
 	}
 	if strings.Contains(candidate, "${") || strings.Contains(candidate, "+") {
 		return false
+	}
+	if strings.HasPrefix(lower, "ws://") || strings.HasPrefix(lower, "wss://") {
+		return true
 	}
 	if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") || strings.HasPrefix(candidate, "//") {
 		return true
