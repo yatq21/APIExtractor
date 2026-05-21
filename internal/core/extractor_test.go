@@ -78,6 +78,51 @@ func TestExtractFromTextHandlesStringConcatConservatively(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+func TestExtractFromTextHandlesRequestObjectConcatConservatively(t *testing.T) {
+	text := `const options = { url: "/api/users" + id + "?a=1" };`
+
+	got := ExtractFromText(text)
+	want := []string{"/api/users"}
+
+	assertStringSlice(t, got, want)
+}
+
+func TestExtractFromTextFindsNewURLFirstArg(t *testing.T) {
+	text := `const full = new URL("/api/order", location.origin);`
+
+	got := ExtractFromText(text)
+	want := []string{"/api/order"}
+
+	assertStringSlice(t, got, want)
+}
+
+func TestExtractFromTextIgnoresFunctionExpressionURL(t *testing.T) {
+	text := `const options = { url: getApiUrl() };`
+
+	got := ExtractFromText(text)
+	if len(got) != 0 {
+		t.Fatalf("expected empty candidates, got %#v", got)
+	}
+}
+
+func TestExtractFromTextSkipsStaticJSConcatPath(t *testing.T) {
+	text := `const options = { path: "/static/app.js" + v };`
+
+	got := ExtractFromText(text)
+	if len(got) != 0 {
+		t.Fatalf("expected empty candidates, got %#v", got)
+	}
+}
+
+func TestExtractFromTextCleansLogicalFallbackTail(t *testing.T) {
+	text := `const options = { url: "/api/a" || fallback };`
+
+	got := ExtractFromText(text)
+	want := []string{"/api/a"}
+
+	assertStringSlice(t, got, want)
+}
+
 func assertStringSlice(t *testing.T, got []string, want []string) {
 	t.Helper()
 
