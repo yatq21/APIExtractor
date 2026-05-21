@@ -16,10 +16,11 @@ var (
 	xhrOpenPattern            = regexp.MustCompile("(?is)\\.open\\s*\\(\\s*[\"'`][A-Z]+[\"'`]\\s*,\\s*[\"'`]([^\"'`]+)[\"'`]")
 	axiosPattern              = regexp.MustCompile("(?is)\\baxios(?:\\.[a-z]+)?\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
 	axiosObjectURLPattern     = regexp.MustCompile("(?is)\\baxios\\s*\\(\\s*\\{[^{}]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+	newURLPattern             = regexp.MustCompile("(?is)\\bnew\\s+URL\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]\\s*,")
 	jqueryAjaxURLPattern      = regexp.MustCompile("(?is)\\$\\.(?:ajax|get|post|getJSON)\\s*\\([^)]*?\\burl\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
 	jqueryShortcutPattern     = regexp.MustCompile("(?is)\\$\\.(?:get|post|getJSON)\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
 	requestObjectURLPattern   = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
-	requestObjectExprPattern  = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*([^,\\n}]+)")
+	requestObjectExprPattern  = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*([\"'`][^,\\n}]*|/(?:[^,\\n}]*)|https?://[^,\\n}]+|wss?://[^,\\n}]+)")
 	graphQLOperationPattern   = regexp.MustCompile("(?is)\\b(?:query|mutation)\\s+[A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?\\s*\\{")
 	businessPathPattern       = regexp.MustCompile(`(?i)^/(?:v[0-9]+|admin|auth|user|users|account|accounts|order|orders|pay|payment|member|members|tenant|tenants|system|manage|backend|console)(?:/|$)`)
 )
@@ -44,6 +45,7 @@ func ExtractFromText(text string) []string {
 	mergeMatches(xhrOpenPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(axiosPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(axiosObjectURLPattern.FindAllStringSubmatch(text, -1))
+	mergeMatches(newURLPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(jqueryAjaxURLPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(jqueryShortcutPattern.FindAllStringSubmatch(text, -1))
 	mergeMatches(requestObjectURLPattern.FindAllStringSubmatch(text, -1))
@@ -114,6 +116,20 @@ func extractStaticPrefix(raw string) string {
 		candidate = candidate[:idx]
 	}
 	if idx := strings.Index(candidate, "+"); idx >= 0 {
+		candidate = candidate[:idx]
+	}
+	if strings.ContainsAny(candidate, "\"'`") {
+		if idx := strings.Index(candidate, "||"); idx >= 0 {
+			candidate = candidate[:idx]
+		}
+		if idx := strings.Index(candidate, "&&"); idx >= 0 {
+			candidate = candidate[:idx]
+		}
+	}
+	if idx := strings.Index(candidate, ")"); idx >= 0 {
+		candidate = candidate[:idx]
+	}
+	if idx := strings.Index(candidate, ";"); idx >= 0 {
 		candidate = candidate[:idx]
 	}
 
