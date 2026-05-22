@@ -34,4 +34,3 @@ func TestExtractNestedSourceURLs(t *testing.T) {
 
 	assertStringSlice(t, got, want)
 }
-

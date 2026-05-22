@@ -1,0 +1,4 @@
+{
+  "bootstrap": "/api/mobile/bootstrap",
+  "search": "/api/v1/search?q=demo"
+}

@@ -1,0 +1,5 @@
+{
+  "email": "admin@example.com",
+  "token": "abc.def.ghi",
+  "debug": "stacktrace"
+}

@@ -10,7 +10,6 @@ import (
 
 	"apiextractor/internal/config"
 	"apiextractor/internal/model"
-	"apiextractor/internal/urlutil"
 )
 
 var (
@@ -21,7 +20,7 @@ var (
 	chunkPattern         = regexp.MustCompile(`["']([^"']*(?:chunk|bundle|vendor|runtime|app|main)[^"']*\.(?:m?js|map|json)(?:\?[^"']*)?)["']`)
 )
 
-// FetchURL 请求指定 URL，并返回限制大小后的文本响应体。
+// FetchURL requests the target URL and returns a bounded text response body.
 func FetchURL(rawURL string, cfg config.Config) (string, error) {
 	client := &http.Client{Timeout: cfg.Timeout}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -47,12 +46,12 @@ func FetchURL(rawURL string, cfg config.Config) (string, error) {
 	return string(body), nil
 }
 
-// ExtractJSURLs 保留旧入口，内部升级为更宽的脚本/source map 来源发现。
+// ExtractJSURLs keeps backward compatibility and delegates to source discovery.
 func ExtractJSURLs(html string, baseURL string, sameOrigin bool) []string {
 	return ExtractSourceURLs(html, baseURL, sameOrigin)
 }
 
-// ExtractSourceURLs 从 HTML 中收集可能包含接口线索的脚本、预加载脚本和 source map。
+// ExtractSourceURLs collects script, preload, and source-map style source URLs from HTML.
 func ExtractSourceURLs(html string, baseURL string, sameOrigin bool) []string {
 	seen := make(map[string]struct{})
 	urls := make([]string, 0)
@@ -72,12 +71,12 @@ func ExtractSourceURLs(html string, baseURL string, sameOrigin bool) []string {
 	return urls
 }
 
-// FetchJSFiles 保留旧入口，内部升级为递归抓取 JS、动态 chunk 和 source map。
+// FetchJSFiles keeps backward compatibility and delegates to source fetching.
 func FetchJSFiles(jsURLs []string, cfg config.Config) []model.SourceFile {
 	return FetchSourceFiles(jsURLs, cfg)
 }
 
-// FetchSourceFiles 下载初始脚本后继续发现动态 chunk、ES module import 和 source map。
+// FetchSourceFiles downloads initial source files and recursively discovers chunks/imports/maps.
 func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile {
 	if cfg.MaxSourceFiles <= 0 {
 		cfg.MaxSourceFiles = 40
@@ -106,7 +105,8 @@ func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile
 			SourceType: detectSourceType(item),
 		}
 		if err != nil {
-			file.Error = err.Error()
+			file.ErrorType = classifyError(err)
+			file.Error = truncateError(err.Error())
 			files = append(files, file)
 			continue
 		}
@@ -130,7 +130,7 @@ func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile
 	return files
 }
 
-// ExtractNestedSourceURLs 从脚本文本里继续提取 source map、动态 import 和常见构建产物 chunk。
+// ExtractNestedSourceURLs discovers source maps, dynamic imports, and common build chunks.
 func ExtractNestedSourceURLs(text string, baseURL string, sameOrigin bool) []string {
 	seen := make(map[string]struct{})
 	urls := make([]string, 0)
@@ -170,15 +170,40 @@ func normalizeSourceURL(raw string, baseURL string, sameOrigin bool) (string, bo
 		return "", false
 	}
 
-	normalized, ok := urlutil.NormalizeCandidate(raw, baseURL, sameOrigin)
-	if !ok {
-		return "", false
+	if strings.HasPrefix(raw, "//") {
+		baseParsed, err := url.Parse(baseURL)
+		if err != nil {
+			return "", false
+		}
+		raw = baseParsed.Scheme + ":" + raw
 	}
-	if !isTextSource(normalized) {
+
+	baseParsed, err := url.Parse(baseURL)
+	if err != nil {
 		return "", false
 	}
 
-	return normalized, true
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+
+	resolved := baseParsed.ResolveReference(parsed)
+	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+		return "", false
+	}
+	if sameOrigin && !strings.EqualFold(resolved.Scheme, baseParsed.Scheme) {
+		return "", false
+	}
+	if sameOrigin && !strings.EqualFold(resolved.Host, baseParsed.Host) {
+		return "", false
+	}
+	if !isTextSource(resolved.String()) {
+		return "", false
+	}
+
+	resolved.Fragment = ""
+	return resolved.String(), true
 }
 
 func isTextSource(rawURL string) bool {
