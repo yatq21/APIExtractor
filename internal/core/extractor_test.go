@@ -49,6 +49,7 @@ func TestExtractFromTextFindsRequestConstructorAndWebSocket(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 模板字符串场景只保留 `${}` 之前的静态前缀，验证“保守提取”不会误拼接动态变量。
 func TestExtractFromTextHandlesTemplateLiteralConservatively(t *testing.T) {
 	text := "fetch(`/api/users/${userId}`);\nconst options = { url: `/v1/orders/${orderId}` };"
 
@@ -61,6 +62,7 @@ func TestExtractFromTextHandlesTemplateLiteralConservatively(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 字符串拼接场景验证只截取左侧静态路径，不把运行期拼接表达式写入候选。
 func TestExtractFromTextHandlesStringConcatConservatively(t *testing.T) {
 	text := `
 		fetch("/api/" + userId + "/detail");
@@ -78,6 +80,7 @@ func TestExtractFromTextHandlesStringConcatConservatively(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 对象字面量中的 url 拼接路径也应遵循同样的静态前缀规则。
 func TestExtractFromTextHandlesRequestObjectConcatConservatively(t *testing.T) {
 	text := `const options = { url: "/api/users" + id + "?a=1" };`
 
@@ -114,6 +117,7 @@ func TestExtractFromTextSkipsStaticJSConcatPath(t *testing.T) {
 	}
 }
 
+// 验证 `|| fallback` 这类逻辑尾巴会被清理，确保候选可直接用于请求重放。
 func TestExtractFromTextCleansLogicalFallbackTail(t *testing.T) {
 	text := `const options = { url: "/api/a" || fallback };`
 
@@ -149,6 +153,7 @@ func TestExtractFromTextJQueryShortcutGetPostGetJSON(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 集中覆盖 `||`、`&&`、`)`、`;` 等尾随符号清理规则，避免正则捕获后残留语法噪声。
 func TestExtractFromTextCleanTailAndOrParenSemicolon(t *testing.T) {
 	text := `
 		const a = { url: "/api/a" || fallback };
@@ -168,6 +173,7 @@ func TestExtractFromTextCleanTailAndOrParenSemicolon(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 覆盖 `\/` 与 `\u002f` 两类 escaped slash，确保混淆写法能还原为可读路径。
 func TestExtractFromTextDecodeEscapedSlash(t *testing.T) {
 	text := `const options = { url: "\/api\/users\u002fdetail\u002Fv1" };`
 
@@ -177,6 +183,7 @@ func TestExtractFromTextDecodeEscapedSlash(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 协议型伪链接容易被字符串规则误抓，这里确认 javascript:/data:/mailto: 必须被过滤。
 func TestExtractFromTextFilterJavascriptDataMailto(t *testing.T) {
 	text := `
 		fetch("javascript:alert(1)");
@@ -190,6 +197,7 @@ func TestExtractFromTextFilterJavascriptDataMailto(t *testing.T) {
 	}
 }
 
+// 该用例保留为能力边界跟踪：当前 XHR method 规则仅匹配大写方法名。
 func TestExtractFromTextXHRLowercaseMethod(t *testing.T) {
 	t.Skip("future work: explicitly decide lowercase XHR method handling and keep this as a tracked case")
 
@@ -201,6 +209,7 @@ func TestExtractFromTextXHRLowercaseMethod(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 该用例保留为能力边界跟踪：当前 $.ajax("url", {...}) 首参数提取尚未启用。
 func TestExtractFromTextJQueryAjaxStringFirstArg(t *testing.T) {
 	t.Skip("future work: support $.ajax(\"/api/x\", {...}) first-argument URL extraction")
 
@@ -212,6 +221,7 @@ func TestExtractFromTextJQueryAjaxStringFirstArg(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 该用例保留为能力边界跟踪：当前 GraphQL 启发式仅覆盖 query/mutation，不含 subscription。
 func TestExtractFromTextGraphQLSubscription(t *testing.T) {
 	t.Skip("future work: support GraphQL subscription operation heuristic")
 
@@ -223,6 +233,7 @@ func TestExtractFromTextGraphQLSubscription(t *testing.T) {
 	assertStringSlice(t, got, want)
 }
 
+// 该用例跟踪绝对静态资源 URL 误报问题，提醒后续收敛策略不要破坏现有召回行为。
 func TestExtractFromTextAbsoluteStaticURLFalsePositive(t *testing.T) {
 	t.Skip("future work: reduce absolute static asset false positives")
 
@@ -234,6 +245,7 @@ func TestExtractFromTextAbsoluteStaticURLFalsePositive(t *testing.T) {
 	}
 }
 
+// 该用例跟踪 businessPathPattern 带来的路由误报风险，明确它是“召回优先”的已知折中。
 func TestExtractFromTextBusinessRouteFalsePositive(t *testing.T) {
 	t.Skip("future work: reduce business route false positives for non-API pages")
 
