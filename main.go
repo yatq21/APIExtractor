@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"apiextractor/internal/config"
 	"apiextractor/internal/core"
@@ -18,6 +19,9 @@ func main() {
 	cfg.OutputFormat = opts.outputFormat
 	cfg.OutputPath = opts.outputPath
 	cfg.SameOrigin = !opts.allowCrossOrigin
+	cfg.EnableDirectoryScan = !opts.disableDirectoryScan
+	cfg.UseBuiltinDictionary = !opts.disableBuiltinDictionary
+	cfg.DictionaryPaths = opts.dictionaryPaths
 
 	if opts.url == "" {
 		fmt.Fprintln(os.Stderr, "missing required flag: -u")
@@ -35,10 +39,14 @@ func main() {
 }
 
 type cliOptions struct {
-	url              string
-	outputFormat     string
-	outputPath       string
-	allowCrossOrigin bool
+	url                      string
+	outputFormat             string
+	outputPath               string
+	allowCrossOrigin         bool
+	disableDirectoryScan     bool
+	disableBuiltinDictionary bool
+	dictionaryPathList       string
+	dictionaryPaths          []string
 }
 
 // parseFlags 读取命令行参数并转换为内部选项结构。
@@ -49,7 +57,24 @@ func parseFlags() cliOptions {
 	flag.StringVar(&opts.outputFormat, "format", "table", "Output format: table or json")
 	flag.StringVar(&opts.outputPath, "o", "", "Optional output file path")
 	flag.BoolVar(&opts.allowCrossOrigin, "allow-cross-origin", false, "Keep candidates from other origins")
+	flag.BoolVar(&opts.disableDirectoryScan, "no-dir-scan", false, "Disable dictionary based directory/resource discovery")
+	flag.BoolVar(&opts.disableBuiltinDictionary, "no-builtin-dict", false, "Disable builtin dictionary entries")
+	flag.StringVar(&opts.dictionaryPathList, "dict", "", "Local dictionary file path, use comma to separate multiple files")
 	flag.Parse()
 
+	opts.dictionaryPaths = splitList(opts.dictionaryPathList)
 	return opts
+}
+
+func splitList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
 }

@@ -8,6 +8,21 @@ type SourceFile struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type ResourceRecord struct {
+	URL            string `json:"url"`
+	FinalURL       string `json:"final_url,omitempty"`
+	Method         string `json:"method"`
+	StatusCode     int    `json:"status_code"`
+	ContentLength  int    `json:"content_length"`
+	ContentType    string `json:"content_type,omitempty"`
+	DurationMS     int64  `json:"duration_ms"`
+	ResourceType   string `json:"resource_type"`
+	DiscoverSource string `json:"discover_source"`
+	SameOrigin     bool   `json:"same_origin"`
+	ShouldAnalyze  bool   `json:"should_analyze"`
+	FetchError     string `json:"fetch_error,omitempty"`
+}
+
 // RequestResult 记录单个接口请求的响应元信息和响应体预览。
 type RequestResult struct {
 	URL          string `json:"url"`
@@ -29,17 +44,20 @@ type AnalysisResult struct {
 
 // Summary 保存一次扫描完成后的汇总计数。
 type Summary struct {
-	CandidateCount     int `json:"candidate_count"`
-	JSFileCount        int `json:"js_file_count"`
-	SuccessfulRequests int `json:"successful_requests"`
-	FailedRequests     int `json:"failed_requests"`
-	JSONResponses      int `json:"json_responses"`
+	CandidateCount          int `json:"candidate_count"`
+	JSFileCount             int `json:"js_file_count"`
+	ResourceCount           int `json:"resource_count"`
+	AnalyzableResourceCount int `json:"analyzable_resource_count"`
+	SuccessfulRequests      int `json:"successful_requests"`
+	FailedRequests          int `json:"failed_requests"`
+	JSONResponses           int `json:"json_responses"`
 }
 
 // ScanResult 是扫描流程产出的顶层结果对象。
 type ScanResult struct {
 	TargetURL      string           `json:"target_url"`
 	JSFiles        []string         `json:"js_files"`
+	Resources      []ResourceRecord `json:"resources"`
 	Candidates     []string         `json:"candidates"`
 	RequestResults []RequestResult  `json:"request_results"`
 	Analysis       []AnalysisResult `json:"analysis"`
