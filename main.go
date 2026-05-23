@@ -22,6 +22,8 @@ func main() {
 	cfg.EnableDirectoryScan = !opts.disableDirectoryScan
 	cfg.UseBuiltinDictionary = !opts.disableBuiltinDictionary
 	cfg.DictionaryPaths = opts.dictionaryPaths
+	cfg.DirectoryScanConcurrency = opts.concurrency
+	cfg.EnableSoft404Detection = !opts.disableSoft404Detection
 
 	if opts.url == "" {
 		fmt.Fprintln(os.Stderr, "missing required flag: -u")
@@ -45,6 +47,8 @@ type cliOptions struct {
 	allowCrossOrigin         bool
 	disableDirectoryScan     bool
 	disableBuiltinDictionary bool
+	disableSoft404Detection  bool
+	concurrency              int
 	dictionaryPathList       string
 	dictionaryPaths          []string
 }
@@ -59,6 +63,9 @@ func parseFlags() cliOptions {
 	flag.BoolVar(&opts.allowCrossOrigin, "allow-cross-origin", false, "Keep candidates from other origins")
 	flag.BoolVar(&opts.disableDirectoryScan, "no-dir-scan", false, "Disable dictionary based directory/resource discovery")
 	flag.BoolVar(&opts.disableBuiltinDictionary, "no-builtin-dict", false, "Disable builtin dictionary entries")
+	flag.BoolVar(&opts.disableSoft404Detection, "no-soft-404", false, "Disable soft 404 baseline filtering")
+	flag.IntVar(&opts.concurrency, "c", 10, "Directory scan concurrency")
+	flag.IntVar(&opts.concurrency, "concurrency", 10, "Directory scan concurrency")
 	flag.StringVar(&opts.dictionaryPathList, "dict", "", "Local dictionary file path, use comma to separate multiple files")
 	flag.Parse()
 

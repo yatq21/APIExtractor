@@ -1,11 +1,16 @@
 package core
 
 import (
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"apiextractor/internal/config"
@@ -15,6 +20,24 @@ import (
 type discoveredResource struct {
 	record  model.ResourceRecord
 	content string
+}
+
+type resourceScanJob struct {
+	index int
+	url   string
+}
+
+type resourceScanResult struct {
+	index     int
+	discovery discoveredResource
+}
+
+type soft404Baseline struct {
+	enabled       bool
+	statusCode    int
+	contentLength int
+	title         string
+	bodyHash      string
 }
 
 // DiscoverResources probes dictionary entries under the target origin and returns reusable resource records.
@@ -29,7 +52,11 @@ func DiscoverResources(targetURL string, dictionary []string, cfg config.Config)
 	}
 
 	resourceURLs := buildDirectoryScanURLs(dictionary, baseURL, cfg)
-	return probeResourceURLs(resourceURLs, targetURL, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout*time.Duration(maxInt(1, len(resourceURLs))))
+	defer cancel()
+
+	baseline := buildSoft404Baseline(ctx, baseURL, targetURL, cfg)
+	return probeResourceURLs(ctx, resourceURLs, targetURL, cfg, baseline)
 }
 
 func buildDirectoryScanURLs(dictionary []string, baseURL *url.URL, cfg config.Config) []string {
@@ -62,13 +89,18 @@ func directoryScanLimit(dictionaryCount int, configuredLimit int) int {
 	return configuredLimit
 }
 
-func probeResourceURLs(resourceURLs []string, targetURL string, cfg config.Config) ([]model.ResourceRecord, []model.SourceFile) {
+func probeResourceURLs(ctx context.Context, resourceURLs []string, targetURL string, cfg config.Config, baseline soft404Baseline) ([]model.ResourceRecord, []model.SourceFile) {
+	results := runResourceWorkers(ctx, resourceURLs, targetURL, cfg)
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].index < results[j].index
+	})
+
 	records := make([]model.ResourceRecord, 0, len(resourceURLs))
 	sourceFiles := make([]model.SourceFile, 0)
 
-	for _, resourceURL := range resourceURLs {
-		discovered := ProbeResource(resourceURL, targetURL, cfg, "dictionary")
-		if !shouldKeepResource(discovered.record) {
+	for _, result := range results {
+		discovered := result.discovery
+		if isSoft404(discovered, baseline) || !shouldKeepResource(discovered.record) {
 			continue
 		}
 
@@ -82,11 +114,82 @@ func probeResourceURLs(resourceURLs []string, targetURL string, cfg config.Confi
 	return records, sourceFiles
 }
 
+// runResourceWorkers keeps directory probing bounded by DirectoryScanConcurrency.
+func runResourceWorkers(ctx context.Context, resourceURLs []string, targetURL string, cfg config.Config) []resourceScanResult {
+	workerCount := directoryScanConcurrency(cfg.DirectoryScanConcurrency, len(resourceURLs))
+	jobs := make(chan resourceScanJob)
+	results := make(chan resourceScanResult)
+	var wg sync.WaitGroup
+
+	for workerID := 0; workerID < workerCount; workerID++ {
+		wg.Add(1)
+		go resourceWorker(ctx, &wg, jobs, results, targetURL, cfg)
+	}
+
+	go produceResourceJobs(ctx, resourceURLs, jobs)
+	go closeResourceResults(results, &wg)
+
+	return collectResourceResults(results)
+}
+
+func directoryScanConcurrency(configuredConcurrency int, jobCount int) int {
+	if jobCount <= 0 {
+		return 0
+	}
+	if configuredConcurrency <= 0 {
+		configuredConcurrency = 10
+	}
+	if configuredConcurrency > jobCount {
+		return jobCount
+	}
+	return configuredConcurrency
+}
+
+func produceResourceJobs(ctx context.Context, resourceURLs []string, jobs chan<- resourceScanJob) {
+	defer close(jobs)
+	for index, resourceURL := range resourceURLs {
+		select {
+		case <-ctx.Done():
+			return
+		case jobs <- resourceScanJob{index: index, url: resourceURL}:
+		}
+	}
+}
+
+func resourceWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan resourceScanJob, results chan<- resourceScanResult, targetURL string, cfg config.Config) {
+	defer wg.Done()
+	for job := range jobs {
+		discovered := ProbeResourceWithContext(ctx, job.url, targetURL, cfg, "dictionary")
+		select {
+		case <-ctx.Done():
+			return
+		case results <- resourceScanResult{index: job.index, discovery: discovered}:
+		}
+	}
+}
+
+func closeResourceResults(results chan<- resourceScanResult, wg *sync.WaitGroup) {
+	wg.Wait()
+	close(results)
+}
+
+func collectResourceResults(results <-chan resourceScanResult) []resourceScanResult {
+	items := make([]resourceScanResult, 0)
+	for result := range results {
+		items = append(items, result)
+	}
+	return items
+}
+
 // ProbeResource sends one GET request and records metadata needed by resource discovery output.
 func ProbeResource(rawURL string, baseURL string, cfg config.Config, discoverSource string) discoveredResource {
+	return ProbeResourceWithContext(context.Background(), rawURL, baseURL, cfg, discoverSource)
+}
+
+func ProbeResourceWithContext(ctx context.Context, rawURL string, baseURL string, cfg config.Config, discoverSource string) discoveredResource {
 	start := time.Now()
 	record := newResourceRecord(rawURL, baseURL, discoverSource)
-	req, err := newResourceRequest(rawURL, cfg)
+	req, err := newResourceRequest(ctx, rawURL, cfg)
 	if err != nil {
 		record.FetchError = err.Error()
 		return discoveredResource{record: record}
@@ -124,8 +227,8 @@ func newResourceRecord(rawURL string, baseURL string, discoverSource string) mod
 	}
 }
 
-func newResourceRequest(rawURL string, cfg config.Config) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+func newResourceRequest(ctx context.Context, rawURL string, cfg config.Config) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +249,111 @@ func fillResourceResponse(record *model.ResourceRecord, resp *http.Response, bod
 	record.ContentLength = len(body)
 	record.ResourceType = DetectResourceType(record.FinalURL, record.ContentType)
 	record.ShouldAnalyze = shouldAnalyzeResource(record.ResourceType, record.ContentType)
+}
+
+// buildSoft404Baseline probes one random path so later 200-like missing pages can be filtered.
+func buildSoft404Baseline(ctx context.Context, baseURL *url.URL, targetURL string, cfg config.Config) soft404Baseline {
+	if !cfg.EnableSoft404Detection {
+		return soft404Baseline{}
+	}
+
+	baselineURL := randomSoft404URL(baseURL)
+	discovered := ProbeResourceWithContext(ctx, baselineURL, targetURL, cfg, "soft404-baseline")
+	if discovered.record.FetchError != "" || discovered.content == "" {
+		return soft404Baseline{}
+	}
+
+	return soft404Baseline{
+		enabled:       true,
+		statusCode:    discovered.record.StatusCode,
+		contentLength: discovered.record.ContentLength,
+		title:         extractHTMLTitle(discovered.content),
+		bodyHash:      hashBody(normalizeBodyForHash(discovered.content)),
+	}
+}
+
+func randomSoft404URL(baseURL *url.URL) string {
+	probe := *baseURL
+	probe.RawQuery = ""
+	probe.Fragment = ""
+	probe.Path = path.Join("/", "apiextractor-soft-404-"+time.Now().UTC().Format("20060102150405.000000000"))
+	return probe.String()
+}
+
+// isSoft404 uses exact body hash first, then title plus similar length as a lightweight fallback.
+func isSoft404(discovered discoveredResource, baseline soft404Baseline) bool {
+	if !baseline.enabled || discovered.record.FetchError != "" {
+		return false
+	}
+	if discovered.record.StatusCode != baseline.statusCode {
+		return false
+	}
+	if discovered.record.StatusCode == http.StatusUnauthorized || discovered.record.StatusCode == http.StatusForbidden {
+		return false
+	}
+
+	title := extractHTMLTitle(discovered.content)
+	bodyHash := hashBody(normalizeBodyForHash(discovered.content))
+	if baseline.bodyHash != "" && bodyHash == baseline.bodyHash {
+		return true
+	}
+	if baseline.title != "" && strings.EqualFold(title, baseline.title) && similarLength(discovered.record.ContentLength, baseline.contentLength) {
+		return true
+	}
+	return false
+}
+
+func extractHTMLTitle(body string) string {
+	lower := strings.ToLower(body)
+	tagStart := strings.Index(lower, "<title")
+	if tagStart < 0 {
+		return ""
+	}
+	openEndOffset := strings.Index(lower[tagStart:], ">")
+	if openEndOffset < 0 {
+		return ""
+	}
+	titleStart := tagStart + openEndOffset + 1
+	end := strings.Index(lower[titleStart:], "</title>")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(body[titleStart : titleStart+end])
+}
+
+func normalizeBodyForHash(body string) string {
+	return strings.Join(strings.Fields(body), " ")
+}
+
+func hashBody(body string) string {
+	sum := sha1.Sum([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+func similarLength(left int, right int) bool {
+	if left == right {
+		return true
+	}
+	maxValue := maxInt(left, right)
+	if maxValue == 0 {
+		return true
+	}
+	diff := maxInt(left, right) - minInt(left, right)
+	return float64(diff)/float64(maxValue) <= 0.05
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func sourceFileFromResource(discovered discoveredResource) (model.SourceFile, bool) {

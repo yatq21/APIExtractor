@@ -102,3 +102,82 @@ func TestDiscoverResourcesReturnsAnalyzableContent(t *testing.T) {
 		t.Fatal("expected analyzable resource content to be retained")
 	}
 }
+
+func TestDiscoverResourcesKeepsDictionaryOrderWithConcurrency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/first":
+			_, _ = w.Write([]byte(`{"url":"/api/first"}`))
+		case "/second":
+			_, _ = w.Write([]byte(`{"url":"/api/second"}`))
+		case "/third":
+			_, _ = w.Write([]byte(`{"url":"/api/third"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.UseBuiltinDictionary = false
+	cfg.DirectoryScanConcurrency = 3
+	cfg.EnableSoft404Detection = false
+
+	records, _ := DiscoverResources(server.URL, []string{"/first", "/second", "/third"}, cfg)
+	if len(records) != 3 {
+		t.Fatalf("got %d records, want 3", len(records))
+	}
+
+	wantURLs := []string{server.URL + "/first", server.URL + "/second", server.URL + "/third"}
+	for idx, wantURL := range wantURLs {
+		if records[idx].URL != wantURL {
+			t.Fatalf("record %d URL = %q, want %q", idx, records[idx].URL, wantURL)
+		}
+	}
+}
+
+func TestDiscoverResourcesFiltersSoft404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Path {
+		case "/real":
+			_, _ = w.Write([]byte(`<html><title>Real</title><body>real admin panel</body></html>`))
+		default:
+			_, _ = w.Write([]byte(`<html><title>Not Found</title><body>same missing page</body></html>`))
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.UseBuiltinDictionary = false
+	cfg.DirectoryScanConcurrency = 2
+	cfg.EnableSoft404Detection = true
+
+	records, _ := DiscoverResources(server.URL, []string{"/fake", "/real"}, cfg)
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1: %#v", len(records), records)
+	}
+	if records[0].URL != server.URL+"/real" {
+		t.Fatalf("got URL %q, want real resource", records[0].URL)
+	}
+}
+
+func TestSoft404Helpers(t *testing.T) {
+	title := extractHTMLTitle(`<html><head><title> Missing Page </title></head></html>`)
+	if title != "Missing Page" {
+		t.Fatalf("got title %q", title)
+	}
+
+	normalized := normalizeBodyForHash("<html>\n  missing\t page </html>")
+	if normalized != "<html> missing page </html>" {
+		t.Fatalf("got normalized body %q", normalized)
+	}
+
+	if !similarLength(100, 104) {
+		t.Fatal("expected close lengths to be similar")
+	}
+	if similarLength(100, 120) {
+		t.Fatal("expected distant lengths to be different")
+	}
+}
