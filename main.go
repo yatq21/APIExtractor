@@ -24,7 +24,9 @@ func run() int {
 	cfg.SameOrigin = !opts.allowCrossOrigin
 	cfg.LogLevel = opts.logLevel
 	cfg.WordlistPath = opts.wordlistPath
+	cfg.DisableDirectoryScan = opts.noDirScan
 	cfg.DisableBuiltinWordlist = opts.noBuiltinWordlist
+	cfg.EnableSoft404Detection = !opts.noSoft404
 	logger.SetLevel(cfg.LogLevel)
 
 	if err := applyHeaders(&cfg, opts.headers); err != nil {
@@ -78,7 +80,9 @@ type cliOptions struct {
 	cookie            string
 	logLevel          string
 	wordlistPath      string
+	noDirScan         bool
 	noBuiltinWordlist bool
+	noSoft404         bool
 	maxResources      int
 	depth             int
 	concurrency       int
@@ -95,9 +99,14 @@ func parseFlags() cliOptions {
 	flag.StringVar(&opts.cookie, "cookie", "", "Optional cookie header value")
 	flag.StringVar(&opts.logLevel, "log-level", "info", "Log level: silent, info, warn, debug")
 	flag.StringVar(&opts.wordlistPath, "wordlist", "", "Optional local wordlist file path")
+	flag.StringVar(&opts.wordlistPath, "dict", "", "Optional local wordlist file path")
+	flag.BoolVar(&opts.noDirScan, "no-dir-scan", false, "Disable wordlist based directory/resource discovery")
 	flag.BoolVar(&opts.noBuiltinWordlist, "no-builtin-wordlist", false, "Disable builtin wordlist entries")
+	flag.BoolVar(&opts.noBuiltinWordlist, "no-builtin-dict", false, "Disable builtin wordlist entries")
+	flag.BoolVar(&opts.noSoft404, "no-soft-404", false, "Disable soft 404 baseline filtering")
 	flag.IntVar(&opts.depth, "depth", 2, "Maximum recursion depth")
 	flag.IntVar(&opts.maxResources, "max-resources", 200, "Maximum directory-scan resources")
+	flag.IntVar(&opts.concurrency, "c", 10, "Maximum concurrent requests")
 	flag.IntVar(&opts.concurrency, "concurrency", 10, "Maximum concurrent requests")
 	flag.Parse()
 

@@ -12,7 +12,9 @@ type Config struct {
 	DefaultHeaders           map[string]string
 	Cookies                  string
 	WordlistPath             string
+	DisableDirectoryScan     bool
 	DisableBuiltinWordlist   bool
+	EnableSoft404Detection   bool
 	MaxResources             int
 	MaxDepth                 int
 	StaticExtension          map[string]struct{}
@@ -31,6 +33,7 @@ func Default() Config {
 		SameOrigin:               true,
 		RequestConcurrency:       6,
 		LogLevel:                 "info",
+		EnableSoft404Detection:   true,
 		MaxResources:             200,
 		MaxDepth:                 2,
 		MaxSourceFiles:           40,

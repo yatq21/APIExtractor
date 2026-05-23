@@ -50,16 +50,21 @@ func Run(targetURL string, cfg config.Config) model.ScanResult {
 		return result
 	}
 
-	wordlistTargets, wordlistMeta, wordlistErr := LoadWordlists(targetURL, cfg)
-	if wordlistErr != nil {
-		result.Errors = append(result.Errors, truncateError(wordlistErr.Error()))
-	} else if len(wordlistMeta) > 0 {
-		result.Wordlists = wordlistMeta
+	var scannedResources []model.ResourceRecord
+	if !cfg.DisableDirectoryScan {
+		wordlistTargets, wordlistMeta, wordlistErr := LoadWordlists(targetURL, cfg)
+		if wordlistErr != nil {
+			result.Errors = append(result.Errors, truncateError(wordlistErr.Error()))
+		} else if len(wordlistMeta) > 0 {
+			result.Wordlists = wordlistMeta
+		}
+		var budgetHits []string
+		scannedResources, budgetHits = ScanDirectoryResources(wordlistTargets, cfg)
+		result.BudgetHits = append(result.BudgetHits, budgetHits...)
 	}
-	scannedResources, budgetHits := ScanDirectoryResources(wordlistTargets, cfg)
-	result.BudgetHits = append(result.BudgetHits, budgetHits...)
 
 	sourceURLs := ExtractSourceURLs(html, targetURL, cfg.SameOrigin)
+	sourceURLs = appendUniqueStrings(sourceURLs, sourceURLsFromResources(scannedResources, cfg.SameOrigin)...)
 	sourceFiles := FetchSourceFiles(sourceURLs, cfg)
 	result.JSFiles = collectSourceURLs(sourceFiles)
 	result.Resources = buildResources(targetURL, html, sourceFiles)
@@ -95,6 +100,37 @@ func builtinWordlists() []model.WordlistMeta {
 			Maintainer:      "APIExtractor",
 		},
 	}
+}
+
+func sourceURLsFromResources(resources []model.ResourceRecord, sameOrigin bool) []string {
+	out := make([]string, 0)
+	for _, item := range resources {
+		if item.BodyPreview == "" {
+			continue
+		}
+		switch item.Type {
+		case "html":
+			out = appendUniqueStrings(out, ExtractSourceURLs(item.BodyPreview, item.URL, sameOrigin)...)
+		case "javascript", "sourcemap", "json", "text", "manifest", "api_doc":
+			out = appendUniqueStrings(out, ExtractNestedSourceURLs(item.BodyPreview, item.URL, sameOrigin)...)
+		}
+	}
+	return out
+}
+
+func appendUniqueStrings(base []string, items ...string) []string {
+	seen := make(map[string]struct{}, len(base)+len(items))
+	for _, item := range base {
+		seen[item] = struct{}{}
+	}
+	for _, item := range items {
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		base = append(base, item)
+	}
+	return base
 }
 
 func collectSourceURLs(files []model.SourceFile) []string {
