@@ -33,19 +33,22 @@ type TargetInfo struct {
 
 // ResourceRecord stores discovered resource metadata.
 type ResourceRecord struct {
-	ResourceID    string   `json:"resource_id,omitempty"`
-	URL           string   `json:"url"`
-	Path          string   `json:"path,omitempty"`
-	Type          string   `json:"resource_type,omitempty"`
-	ContentType   string   `json:"content_type,omitempty"`
-	Category      string   `json:"category,omitempty"`
-	Source        string   `json:"discover_source,omitempty"`
-	SameOrigin    bool     `json:"same_origin,omitempty"`
-	ShouldAnalyze bool     `json:"should_analyze,omitempty"`
-	BodyPreview   string   `json:"body_preview,omitempty"`
-	Tags          []string `json:"tags,omitempty"`
-	FetchError    string   `json:"fetch_error,omitempty"`
-	ErrorType     string   `json:"error_type,omitempty"`
+	ResourceID     string   `json:"resource_id,omitempty"`
+	URL            string   `json:"url"`
+	Path           string   `json:"path,omitempty"`
+	Type           string   `json:"resource_type,omitempty"`
+	ContentType    string   `json:"content_type,omitempty"`
+	StatusCode     int      `json:"status_code,omitempty"`
+	ContentLength  int      `json:"content_length,omitempty"`
+	ResponseTimeMS int64    `json:"response_time,omitempty"`
+	Category       string   `json:"category,omitempty"`
+	Source         string   `json:"discover_source,omitempty"`
+	SameOrigin     bool     `json:"same_origin,omitempty"`
+	ShouldAnalyze  bool     `json:"should_analyze,omitempty"`
+	BodyPreview    string   `json:"body_preview,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	FetchError     string   `json:"fetch_error,omitempty"`
+	ErrorType      string   `json:"error_type,omitempty"`
 }
 
 // APICandidate stores a normalized API candidate before verification.
