@@ -1,0 +1,4 @@
+/api
+/swagger
+/openapi.json
+/admin

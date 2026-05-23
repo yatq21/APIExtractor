@@ -1,18 +1,57 @@
 package logger
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
-// Info 输出普通信息日志。
+var currentLevel = "info"
+
+// SetLevel configures the current log verbosity.
+func SetLevel(level string) {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "silent", "info", "warn", "debug":
+		currentLevel = level
+	default:
+		currentLevel = "info"
+	}
+}
+
+// Debug prints a debug-level message.
+func Debug(message string) {
+	if shouldLog("debug") {
+		fmt.Printf("[D] %s\n", message)
+	}
+}
+
+// Info prints an info-level message.
 func Info(message string) {
-	fmt.Printf("[+] %s\n", message)
+	if shouldLog("info") {
+		fmt.Printf("[+] %s\n", message)
+	}
 }
 
-// Warning 输出警告日志。
+// Warning prints a warning-level message.
 func Warning(message string) {
-	fmt.Printf("[!] %s\n", message)
+	if shouldLog("warn") {
+		fmt.Printf("[!] %s\n", message)
+	}
 }
 
-// Error 输出错误日志。
+// Error prints an error-level message.
 func Error(message string) {
-	fmt.Printf("[-] %s\n", message)
+	if currentLevel != "silent" {
+		fmt.Printf("[-] %s\n", message)
+	}
+}
+
+func shouldLog(level string) bool {
+	order := map[string]int{
+		"silent": 0,
+		"warn":   1,
+		"info":   2,
+		"debug":  3,
+	}
+	return order[currentLevel] >= order[level]
 }
