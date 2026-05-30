@@ -31,24 +31,36 @@ type TargetInfo struct {
 	ConfigSummary ConfigSummary `json:"config_summary"`
 }
 
+// FrontendInfo stores lightweight framework and build artifact recognition.
+type FrontendInfo struct {
+	Frameworks       []string `json:"frameworks,omitempty"`
+	BuildTools       []string `json:"build_tools,omitempty"`
+	Artifacts        []string `json:"artifacts,omitempty"`
+	AnalysisStrategy string   `json:"analysis_strategy,omitempty"`
+}
+
 // ResourceRecord stores discovered resource metadata.
 type ResourceRecord struct {
-	ResourceID     string   `json:"resource_id,omitempty"`
-	URL            string   `json:"url"`
-	Path           string   `json:"path,omitempty"`
-	Type           string   `json:"resource_type,omitempty"`
-	ContentType    string   `json:"content_type,omitempty"`
-	StatusCode     int      `json:"status_code,omitempty"`
-	ContentLength  int      `json:"content_length,omitempty"`
-	ResponseTimeMS int64    `json:"response_time,omitempty"`
-	Category       string   `json:"category,omitempty"`
-	Source         string   `json:"discover_source,omitempty"`
-	SameOrigin     bool     `json:"same_origin,omitempty"`
-	ShouldAnalyze  bool     `json:"should_analyze,omitempty"`
-	BodyPreview    string   `json:"body_preview,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
-	FetchError     string   `json:"fetch_error,omitempty"`
-	ErrorType      string   `json:"error_type,omitempty"`
+	ResourceID     string        `json:"resource_id,omitempty"`
+	URL            string        `json:"url"`
+	Path           string        `json:"path,omitempty"`
+	Type           string        `json:"resource_type,omitempty"`
+	ContentType    string        `json:"content_type,omitempty"`
+	StatusCode     int           `json:"status_code,omitempty"`
+	ContentLength  int           `json:"content_length,omitempty"`
+	ResponseTimeMS int64         `json:"response_time,omitempty"`
+	Category       string        `json:"category,omitempty"`
+	Source         string        `json:"discover_source,omitempty"`
+	SameOrigin     bool          `json:"same_origin,omitempty"`
+	ShouldAnalyze  bool          `json:"should_analyze,omitempty"`
+	BodyPreview    string        `json:"body_preview,omitempty"`
+	Depth          int           `json:"depth,omitempty"`
+	ParentURL      string        `json:"parent_url,omitempty"`
+	Tags           []string      `json:"tags,omitempty"`
+	Frontend       *FrontendInfo `json:"frontend,omitempty"`
+	RelatedSources []string      `json:"related_sources,omitempty"`
+	FetchError     string        `json:"fetch_error,omitempty"`
+	ErrorType      string        `json:"error_type,omitempty"`
 }
 
 // APICandidate stores a normalized API candidate before verification.
@@ -83,11 +95,25 @@ type ExtractedCandidate struct {
 
 // SourceFile stores downloaded source text such as JavaScript or sourcemaps.
 type SourceFile struct {
-	URL        string `json:"url"`
-	SourceType string `json:"source_type,omitempty"`
-	Content    string `json:"content,omitempty"`
-	Error      string `json:"error,omitempty"`
-	ErrorType  string `json:"error_type,omitempty"`
+	URL             string           `json:"url"`
+	SourceType      string           `json:"source_type,omitempty"`
+	Content         string           `json:"content,omitempty"`
+	Depth           int              `json:"depth,omitempty"`
+	ParentURL       string           `json:"parent_url,omitempty"`
+	Frontend        *FrontendInfo    `json:"frontend,omitempty"`
+	RelatedSources  []string         `json:"related_sources,omitempty"`
+	RestoredSources []RestoredSource `json:"restored_sources,omitempty"`
+	Error           string           `json:"error,omitempty"`
+	ErrorType       string           `json:"error_type,omitempty"`
+}
+
+// RestoredSource stores source text recovered from a source map.
+type RestoredSource struct {
+	Name       string   `json:"name,omitempty"`
+	ParentURL  string   `json:"parent_url,omitempty"`
+	SourceType string   `json:"source_type,omitempty"`
+	Content    string   `json:"content,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 // SensitiveMatch stores a masked sensitive data hit.

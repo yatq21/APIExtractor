@@ -15,10 +15,17 @@ import (
 var (
 	scriptSrcPattern     = regexp.MustCompile(`(?i)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
 	linkHrefPattern      = regexp.MustCompile(`(?i)<link\b[^>]*\bhref\s*=\s*["']([^"']+)["']`)
+	manifestLinkPattern  = regexp.MustCompile(`(?i)<link\b[^>]*\brel\s*=\s*["'][^"']*\bmanifest\b[^"']*["'][^>]*\bhref\s*=\s*["']([^"']+)["']`)
 	sourceMapPattern     = regexp.MustCompile(`(?m)//[#@]\s*sourceMappingURL\s*=\s*([^\s]+)`)
 	dynamicImportPattern = regexp.MustCompile(`(?i)(?:import\s*\(\s*|from\s+|import\s+)["']([^"']+\.(?:m?js|map|json)(?:\?[^"']*)?)["']`)
-	chunkPattern         = regexp.MustCompile(`["']([^"']*(?:chunk|bundle|vendor|runtime|app|main)[^"']*\.(?:m?js|map|json)(?:\?[^"']*)?)["']`)
+	chunkPattern         = regexp.MustCompile(`["']([^"']*(?:chunk|bundle|vendor|runtime|app|main|manifest|build-manifest)[^"']*\.(?:m?js|map|json)(?:\?[^"']*)?)["']`)
 )
+
+type sourceQueueItem struct {
+	url    string
+	depth  int
+	parent string
+}
 
 // FetchURL requests the target URL and returns a bounded text response body.
 func FetchURL(rawURL string, cfg config.Config) (string, error) {
@@ -67,6 +74,7 @@ func ExtractSourceURLs(html string, baseURL string, sameOrigin bool) []string {
 
 	addMatches(scriptSrcPattern.FindAllStringSubmatch(html, -1))
 	addMatches(linkHrefPattern.FindAllStringSubmatch(html, -1))
+	addMatches(manifestLinkPattern.FindAllStringSubmatch(html, -1))
 
 	return urls
 }
@@ -78,31 +86,45 @@ func FetchJSFiles(jsURLs []string, cfg config.Config) []model.SourceFile {
 
 // FetchSourceFiles downloads initial source files and recursively discovers chunks/imports/maps.
 func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile {
+	files, _ := FetchSourceFilesWithBudget(sourceURLs, cfg)
+	return files
+}
+
+// FetchSourceFilesWithBudget downloads source files and reports recursion/resource budget hits.
+func FetchSourceFilesWithBudget(sourceURLs []string, cfg config.Config) ([]model.SourceFile, []string) {
 	if cfg.MaxSourceFiles <= 0 {
 		cfg.MaxSourceFiles = 40
 	}
 
-	queue := append([]string(nil), sourceURLs...)
-	queued := make(map[string]struct{}, len(queue))
+	queue := make([]sourceQueueItem, 0, len(sourceURLs))
+	queued := make(map[string]struct{}, len(sourceURLs))
 	downloaded := make(map[string]struct{})
 	files := make([]model.SourceFile, 0, len(sourceURLs))
+	budgetHits := make([]string, 0, 2)
 
-	for _, item := range queue {
+	for _, item := range sourceURLs {
+		queue = append(queue, sourceQueueItem{url: item})
 		queued[item] = struct{}{}
 	}
 
-	for len(queue) > 0 && len(files) < cfg.MaxSourceFiles {
+	for len(queue) > 0 {
+		if len(files) >= cfg.MaxSourceFiles {
+			budgetHits = appendUniqueStrings(budgetHits, "max_source_files_reached")
+			break
+		}
 		item := queue[0]
 		queue = queue[1:]
-		if _, exists := downloaded[item]; exists {
+		if _, exists := downloaded[item.url]; exists {
 			continue
 		}
 
-		downloaded[item] = struct{}{}
-		body, err := FetchURL(item, cfg)
+		downloaded[item.url] = struct{}{}
+		body, err := FetchURL(item.url, cfg)
 		file := model.SourceFile{
-			URL:        item,
-			SourceType: detectSourceType(item),
+			URL:        item.url,
+			SourceType: detectSourceType(item.url),
+			Depth:      item.depth,
+			ParentURL:  item.parent,
 		}
 		if err != nil {
 			file.ErrorType = classifyError(err)
@@ -111,11 +133,22 @@ func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile
 			continue
 		}
 
+		file.Frontend = DetectFrontendFromSource(item.url, body)
+		if file.SourceType == "sourcemap" {
+			file.RestoredSources, file.RelatedSources = ParseSourceMap(body, item.url)
+		}
+		if file.SourceType == "javascript" || file.SourceType == "module" {
+			body = FormatJavaScriptForAnalysis(body)
+		}
 		file.Content = body
 		files = append(files, file)
 
-		nextURLs := ExtractNestedSourceURLs(body, item, cfg.SameOrigin)
+		nextURLs := ExtractNestedSourceURLs(body, item.url, cfg.SameOrigin)
 		for _, next := range nextURLs {
+			if item.depth+1 > cfg.MaxDepth {
+				budgetHits = appendUniqueStrings(budgetHits, "max_depth_reached")
+				continue
+			}
 			if _, exists := queued[next]; exists {
 				continue
 			}
@@ -123,11 +156,11 @@ func FetchSourceFiles(sourceURLs []string, cfg config.Config) []model.SourceFile
 				continue
 			}
 			queued[next] = struct{}{}
-			queue = append(queue, next)
+			queue = append(queue, sourceQueueItem{url: next, depth: item.depth + 1, parent: item.url})
 		}
 	}
 
-	return files
+	return files, budgetHits
 }
 
 // ExtractNestedSourceURLs discovers source maps, dynamic imports, and common build chunks.
