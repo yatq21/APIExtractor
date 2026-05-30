@@ -6,6 +6,16 @@ venv/
 
 .gocache/
 .tmp-go-cache/
+coverage.out
+coverage/
+*.test
+.env
+.env.*
+!.env.example
+.scanner-cache/
+.apiextractor/
+reports/
+tmp/
 .vscode/
 *.exe
 

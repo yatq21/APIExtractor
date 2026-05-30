@@ -64,10 +64,12 @@ func Run(targetURL string, cfg config.Config) model.ScanResult {
 	}
 
 	sourceURLs := ExtractSourceURLs(html, targetURL, cfg.SameOrigin)
+	entryFrontend := DetectFrontendFromHTML(html, sourceURLs)
 	sourceURLs = appendUniqueStrings(sourceURLs, sourceURLsFromResources(scannedResources, cfg.SameOrigin)...)
-	sourceFiles := FetchSourceFiles(sourceURLs, cfg)
+	sourceFiles, sourceBudgetHits := FetchSourceFilesWithBudget(sourceURLs, cfg)
+	result.BudgetHits = appendUniqueStrings(result.BudgetHits, sourceBudgetHits...)
 	result.JSFiles = collectSourceURLs(sourceFiles)
-	result.Resources = buildResources(targetURL, html, sourceFiles)
+	result.Resources = buildResources(targetURL, html, sourceFiles, entryFrontend)
 	result.Resources = mergeResources(result.Resources, scannedResources)
 
 	rawCandidates := ExtractAll(html, targetURL, sourceFiles, result.Resources)
@@ -113,7 +115,18 @@ func sourceURLsFromResources(resources []model.ResourceRecord, sameOrigin bool) 
 			out = appendUniqueStrings(out, ExtractSourceURLs(item.BodyPreview, item.URL, sameOrigin)...)
 		case "javascript", "sourcemap", "json", "text", "manifest", "api_doc":
 			out = appendUniqueStrings(out, ExtractNestedSourceURLs(item.BodyPreview, item.URL, sameOrigin)...)
+			out = appendUniqueStrings(out, sourceURLsFromDiscoveryResource(item, sameOrigin)...)
 		}
+	}
+	return out
+}
+
+func sourceURLsFromDiscoveryResource(resource model.ResourceRecord, sameOrigin bool) []string {
+	items := ExtractCandidatesFromResourceBody(resource.BodyPreview, resource)
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, item := range items {
+		addSourceURL(item.RawValue, resource.URL, sameOrigin, seen, &out)
 	}
 	return out
 }
@@ -199,7 +212,7 @@ func buildSummary(result model.ScanResult) model.Summary {
 	return summary
 }
 
-func buildResources(targetURL string, html string, files []model.SourceFile) []model.ResourceRecord {
+func buildResources(targetURL string, html string, files []model.SourceFile, entryFrontend *model.FrontendInfo) []model.ResourceRecord {
 	out := make([]model.ResourceRecord, 0, len(files)+1)
 	out = append(out, model.ResourceRecord{
 		ResourceID:    "res-target",
@@ -212,7 +225,8 @@ func buildResources(targetURL string, html string, files []model.SourceFile) []m
 		SameOrigin:    true,
 		ShouldAnalyze: true,
 		BodyPreview:   htmlPreview(html),
-		Tags:          []string{"entrypoint"},
+		Tags:          mergeStringTags([]string{"entrypoint"}, FrontendTags(entryFrontend)),
+		Frontend:      entryFrontend,
 	})
 	for idx, item := range files {
 		category := "resource"
@@ -220,19 +234,23 @@ func buildResources(targetURL string, html string, files []model.SourceFile) []m
 			category = "frontend-source"
 		}
 		out = append(out, model.ResourceRecord{
-			ResourceID:    resourceID(idx + 1),
-			URL:           item.URL,
-			Path:          resourcePath(item.URL),
-			Type:          item.SourceType,
-			ContentType:   inferContentTypeFromSource(item.SourceType),
-			Category:      category,
-			Source:        "crawler",
-			SameOrigin:    sameOriginMatch(item.URL, targetURL),
-			ShouldAnalyze: item.Error == "",
-			BodyPreview:   htmlPreview(item.Content),
-			Tags:          resourceTags(item.SourceType, item.URL),
-			FetchError:    item.Error,
-			ErrorType:     item.ErrorType,
+			ResourceID:     resourceID(idx + 1),
+			URL:            item.URL,
+			Path:           resourcePath(item.URL),
+			Type:           item.SourceType,
+			ContentType:    inferContentTypeFromSource(item.SourceType),
+			Category:       category,
+			Source:         "crawler",
+			SameOrigin:     sameOriginMatch(item.URL, targetURL),
+			ShouldAnalyze:  item.Error == "",
+			BodyPreview:    htmlPreview(item.Content),
+			Tags:           mergeStringTags(resourceTags(item.SourceType, item.URL), FrontendTags(item.Frontend)),
+			Frontend:       item.Frontend,
+			RelatedSources: item.RelatedSources,
+			Depth:          item.Depth,
+			ParentURL:      item.ParentURL,
+			FetchError:     item.Error,
+			ErrorType:      item.ErrorType,
 		})
 	}
 	return out

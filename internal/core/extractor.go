@@ -112,16 +112,50 @@ func ExtractAll(html string, targetURL string, sourceFiles []model.SourceFile, r
 		}
 	}
 
-	merge(ExtractFromText(html, targetURL, "res-target", "html"))
+	entryInfo := DetectFrontendFromHTML(html, nil)
+	if record, exists := resourceMap[targetURL]; exists && record.Frontend != nil {
+		entryInfo = record.Frontend
+	}
+	merge(addFrontendTagsToExtracted(ExtractFromText(html, targetURL, "res-target", "html"), entryInfo))
 	for _, file := range sourceFiles {
 		if file.Error != "" {
 			continue
 		}
 		record := resourceMap[file.URL]
-		merge(ExtractFromText(file.Content, file.URL, record.ResourceID, file.SourceType))
+		merge(ExtractKnownFrontendCandidates(file.Content, file.URL, record.ResourceID, file.SourceType, file.Frontend))
+		for _, restored := range file.RestoredSources {
+			if restored.Content == "" {
+				continue
+			}
+			sourceURL := file.URL
+			if restored.Name != "" {
+				sourceURL = file.URL + "#" + restored.Name
+			}
+			items := ExtractKnownFrontendCandidates(restored.Content, sourceURL, record.ResourceID, restored.SourceType, file.Frontend)
+			items = append(items, ExtractFromText(restored.Content, sourceURL, record.ResourceID, restored.SourceType)...)
+			for idx := range items {
+				items[idx].HintTags = mergeStringTags(mergeStringTags(items[idx].HintTags, FrontendTags(file.Frontend)), restored.Tags)
+				if items[idx].DiscoverRule == "" {
+					items[idx].DiscoverRule = "sourcemap-sources-content"
+				}
+			}
+			merge(items)
+		}
+		merge(addFrontendTagsToExtracted(ExtractFromText(file.Content, file.URL, record.ResourceID, file.SourceType), file.Frontend))
 	}
 
 	return all
+}
+
+func addFrontendTagsToExtracted(items []model.ExtractedCandidate, info *model.FrontendInfo) []model.ExtractedCandidate {
+	tags := FrontendTags(info)
+	if len(tags) == 0 {
+		return items
+	}
+	for idx := range items {
+		items[idx].HintTags = mergeStringTags(items[idx].HintTags, tags)
+	}
+	return items
 }
 
 func addCandidate(raw string, discoverRule string, sourceURL string, sourceResourceID string, sourceType string, seen map[string]struct{}, results *[]model.ExtractedCandidate) {
