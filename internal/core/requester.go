@@ -19,16 +19,21 @@ import (
 func RequestAPI(candidate model.APICandidate, cfg config.Config) model.APIResult {
 	start := time.Now()
 	redirectLocation := ""
+	methodHint := strings.ToUpper(strings.TrimSpace(candidate.MethodGuess))
+	actualMethod := http.MethodGet
 	item := model.APIResult{
 		CandidateID:      candidate.CandidateID,
 		APIURL:           candidate.NormalizedURL,
-		Method:           candidate.MethodGuess,
+		Method:           actualMethod,
 		Category:         candidate.Category,
 		Confidence:       candidate.Confidence,
 		SourceResourceID: candidate.SourceResourceID,
 		SourceURL:        candidate.SourceURL,
 		SourceType:       candidate.SourceType,
 		CurlCommand:      buildCurlCommand(candidate, cfg),
+	}
+	if methodHint != "" && methodHint != http.MethodGet {
+		item.RiskHints = append(item.RiskHints, "method_hint_only", "method_hint:"+methodHint)
 	}
 
 	client := &http.Client{
@@ -52,11 +57,7 @@ func RequestAPI(candidate model.APICandidate, cfg config.Config) model.APIResult
 		},
 	}
 
-	method := candidate.MethodGuess
-	if method == "" {
-		method = http.MethodGet
-	}
-	req, err := http.NewRequest(method, candidate.NormalizedURL, nil)
+	req, err := http.NewRequest(actualMethod, candidate.NormalizedURL, nil)
 	if err != nil {
 		item.ErrorType = classifyError(err)
 		item.ErrorReason = truncateError(err.Error())
@@ -138,13 +139,9 @@ func previewBody(body []byte, limit int) string {
 }
 
 func buildCurlCommand(candidate model.APICandidate, cfg config.Config) string {
-	method := candidate.MethodGuess
-	if method == "" {
-		method = http.MethodGet
-	}
 	parts := []string{
 		"curl",
-		"-X", method,
+		"-X", http.MethodGet,
 	}
 
 	headerKeys := make([]string, 0, len(cfg.DefaultHeaders))

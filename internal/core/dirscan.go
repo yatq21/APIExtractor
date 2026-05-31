@@ -183,12 +183,12 @@ func probeResource(ctx context.Context, index int, rawURL string, cfg config.Con
 	record.StatusCode = resp.StatusCode
 	record.Type = classifyResourceType(rawURL, resp.Header.Get("Content-Type"))
 	record.ContentType = resp.Header.Get("Content-Type")
-	record.Tags = discoveryTags(record.Type, rawURL)
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(cfg.MaxResponsePreview)))
 	if readErr == nil {
 		record.BodyPreview = strings.TrimSpace(string(body))
 		record.ContentLength = len(body)
 	}
+	record.Tags = discoveryTags(record.Type, rawURL, record.BodyPreview)
 	return record
 }
 
@@ -348,7 +348,7 @@ func scannedResourcePath(rawURL string) string {
 	return parsed.EscapedPath()
 }
 
-func discoveryTags(resourceType string, rawURL string) []string {
+func discoveryTags(resourceType string, rawURL string, content string) []string {
 	tags := make([]string, 0, 3)
 	switch resourceType {
 	case "robots", "sitemap", "manifest":
@@ -360,5 +360,8 @@ func discoveryTags(resourceType string, rawURL string) []string {
 	if strings.Contains(lowerURL, "admin") || strings.Contains(lowerURL, "backend") || strings.Contains(lowerURL, "console") {
 		tags = append(tags, "admin-path")
 	}
-	return tags
+	if resourceType == "sourcemap" && sourceMapHasSourcesOnly(content) {
+		tags = append(tags, "sourcemap-sources-only")
+	}
+	return mergeStringTags(tags, detectFrameworkTags(rawURL, content))
 }

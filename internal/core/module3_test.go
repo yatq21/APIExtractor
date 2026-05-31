@@ -678,15 +678,12 @@ func TestFilterUnverifiedCandidatesRespectsMethod(t *testing.T) {
 	}
 
 	filtered := filterUnverifiedCandidates(candidates, existing)
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 unverified candidate, got %d", len(filtered))
-	}
-	if filtered[0].MethodGuess != http.MethodPost {
-		t.Fatal("expected POST candidate to remain unverified")
+	if len(filtered) != 0 {
+		t.Fatalf("expected no unverified candidates after GET verification, got %d", len(filtered))
 	}
 }
 
-func TestRequestAPIUsesCandidateMethod(t *testing.T) {
+func TestRequestAPIUsesGETForNonGETMethodHint(t *testing.T) {
 	var gotMethod string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -696,16 +693,26 @@ func TestRequestAPIUsesCandidateMethod(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Default()
-	result := RequestAPI(model.APICandidate{
+	candidate := model.APICandidate{
 		NormalizedURL: server.URL + "/api/v1/orders",
 		MethodGuess:   http.MethodPost,
 		Category:      "authenticated-api",
-	}, cfg)
-
-	if gotMethod != http.MethodPost {
-		t.Fatalf("expected POST request, got %s", gotMethod)
 	}
-	if result.Method != http.MethodPost {
-		t.Fatalf("expected POST result method, got %s", result.Method)
+	result := RequestAPI(candidate, cfg)
+
+	if gotMethod != http.MethodGet {
+		t.Fatalf("expected GET request, got %s", gotMethod)
+	}
+	if candidate.MethodGuess != http.MethodPost {
+		t.Fatalf("expected candidate POST hint to be preserved, got %s", candidate.MethodGuess)
+	}
+	if result.Method != http.MethodGet {
+		t.Fatalf("expected GET result method, got %s", result.Method)
+	}
+	if !containsTag(result.RiskHints, "method_hint_only") || !containsTag(result.RiskHints, "method_hint:POST") {
+		t.Fatalf("expected method hint risk hints, got %#v", result.RiskHints)
+	}
+	if !strings.Contains(result.CurlCommand, "-X GET") || strings.Contains(result.CurlCommand, "-X POST") {
+		t.Fatalf("expected GET-only curl command, got %s", result.CurlCommand)
 	}
 }

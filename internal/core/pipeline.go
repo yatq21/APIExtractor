@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/sha1"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -212,7 +213,7 @@ func buildResources(targetURL string, html string, files []model.SourceFile) []m
 		SameOrigin:    true,
 		ShouldAnalyze: true,
 		BodyPreview:   htmlPreview(html),
-		Tags:          []string{"entrypoint"},
+		Tags:          mergeStringTags([]string{"entrypoint"}, detectFrameworkTags(targetURL, html)),
 	})
 	for idx, item := range files {
 		category := "resource"
@@ -230,7 +231,7 @@ func buildResources(targetURL string, html string, files []model.SourceFile) []m
 			SameOrigin:    sameOriginMatch(item.URL, targetURL),
 			ShouldAnalyze: item.Error == "",
 			BodyPreview:   htmlPreview(item.Content),
-			Tags:          resourceTags(item.SourceType, item.URL),
+			Tags:          resourceTags(item.SourceType, item.URL, item.Content),
 			FetchError:    item.Error,
 			ErrorType:     item.ErrorType,
 		})
@@ -288,15 +289,15 @@ func mergeCandidates(base []model.APICandidate, recovered []model.APICandidate) 
 func filterUnverifiedCandidates(candidates []model.APICandidate, existing []model.APIResult) []model.APICandidate {
 	seen := make(map[string]struct{}, len(existing))
 	for _, item := range existing {
-		seen[item.Method+" "+item.APIURL] = struct{}{}
-	}
-	out := make([]model.APICandidate, 0)
-	for _, item := range candidates {
-		method := item.MethodGuess
+		method := item.Method
 		if method == "" {
 			method = http.MethodGet
 		}
-		key := method + " " + item.NormalizedURL
+		seen[method+" "+item.APIURL] = struct{}{}
+	}
+	out := make([]model.APICandidate, 0)
+	for _, item := range candidates {
+		key := http.MethodGet + " " + item.NormalizedURL
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -371,7 +372,7 @@ func inferContentTypeFromSource(sourceType string) string {
 	}
 }
 
-func resourceTags(resourceType string, rawURL string) []string {
+func resourceTags(resourceType string, rawURL string, content string) []string {
 	tags := make([]string, 0, 3)
 	lowerURL := strings.ToLower(rawURL)
 	switch resourceType {
@@ -385,7 +386,59 @@ func resourceTags(resourceType string, rawURL string) []string {
 	if strings.Contains(lowerURL, "chunk") || strings.Contains(lowerURL, "bundle") {
 		tags = append(tags, "bundler-artifact")
 	}
+	if resourceType == "sourcemap" && sourceMapHasSourcesOnly(content) {
+		tags = append(tags, "sourcemap-sources-only")
+	}
+	return mergeStringTags(tags, detectFrameworkTags(rawURL, content))
+}
+
+func sourceMapHasSourcesOnly(content string) bool {
+	var payload sourceMapPayload
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false
+	}
+	return len(payload.Sources) > 0 && len(payload.SourcesContent) == 0
+}
+
+func detectFrameworkTags(rawURL string, content string) []string {
+	lowerURL := strings.ToLower(rawURL)
+	lowerContent := strings.ToLower(content)
+	tags := make([]string, 0, 4)
+	add := func(tag string) {
+		if containsTag(tags, tag) {
+			return
+		}
+		tags = append(tags, tag)
+	}
+
+	if strings.Contains(lowerURL, "/_next/static/") || strings.Contains(lowerContent, "__next_data__") {
+		add("build:next")
+	}
+	if strings.Contains(lowerURL, "/_nuxt/") || strings.Contains(lowerContent, "__nuxt__") {
+		add("build:nuxt")
+	}
+	if strings.Contains(lowerURL, "vite/client") || strings.Contains(lowerContent, "vite/client") || strings.Contains(lowerContent, "import.meta") || htmlHasModuleAsset(lowerContent) {
+		add("build:vite")
+	}
+	if strings.Contains(lowerContent, "__webpack_require__") || strings.Contains(lowerContent, "webpackjsonp") || strings.Contains(lowerURL, "chunk.js") {
+		add("build:webpack")
+	}
+	if strings.Contains(lowerContent, "ng-version") || strings.Contains(lowerURL, "polyfills.") && strings.Contains(lowerURL, ".js") || strings.Contains(lowerURL, "main.") && strings.Contains(lowerURL, ".js") {
+		add("build:angular")
+	}
+	if strings.Contains(lowerContent, "data-v-") || strings.Contains(lowerContent, "__vue__") {
+		add("framework:vue")
+	}
+	if strings.Contains(lowerContent, "__react_devtools_global_hook__") || strings.Contains(lowerContent, "reactroot") || strings.Contains(lowerContent, "data-reactroot") {
+		add("framework:react")
+	}
+
 	return tags
+}
+
+func htmlHasModuleAsset(lowerContent string) bool {
+	hasModule := strings.Contains(lowerContent, `type="module"`) || strings.Contains(lowerContent, `type='module'`)
+	return hasModule && strings.Contains(lowerContent, "/assets/") && strings.Contains(lowerContent, ".js")
 }
 
 func htmlPreview(text string) string {

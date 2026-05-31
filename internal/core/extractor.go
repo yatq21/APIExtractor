@@ -30,10 +30,23 @@ var (
 	requestObjectExprPattern  = regexp.MustCompile("(?is)\\b(?:url|path|endpoint|uri|baseURL|baseUrl)\\s*:\\s*([\"'`][^,\\n}]*|/(?:[^,\\n}]*)|https?://[^,\\n}]+|wss?://[^,\\n}]+)")
 	graphQLOperationPattern   = regexp.MustCompile("(?is)\\b(?:query|mutation)\\s+[A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?\\s*\\{")
 	businessPathPattern       = regexp.MustCompile(`(?i)^/(?:v[0-9]+|admin|auth|user|users|account|accounts|order|orders|pay|payment|member|members|tenant|tenants|system|manage|backend|console)(?:/|$)`)
+	iframeSrcPattern          = regexp.MustCompile(`(?i)<iframe\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
+	formActionPattern         = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*["']([^"']+)["']`)
+	anchorHrefPattern         = regexp.MustCompile(`(?i)<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']`)
+	metaTagPattern            = regexp.MustCompile(`(?is)<meta\b[^>]*>`)
+	contentAttrPattern        = regexp.MustCompile(`(?is)\bcontent\s*=\s*["']([^"']+)["']`)
+	refreshURLPattern         = regexp.MustCompile(`(?i)(?:^|[;,\s])url\s*=\s*([^;]+)`)
 )
 
 type openAPIServer struct {
 	URL string `json:"url"`
+}
+
+type sourceMapPayload struct {
+	Version        int      `json:"version"`
+	Sources        []string `json:"sources"`
+	SourcesContent []string `json:"sourcesContent"`
+	SourceRoot     string   `json:"sourceRoot"`
 }
 
 // ExtractFromText extracts API-like candidates from one text body with source context.
@@ -113,15 +126,87 @@ func ExtractAll(html string, targetURL string, sourceFiles []model.SourceFile, r
 	}
 
 	merge(ExtractFromText(html, targetURL, "res-target", "html"))
+	merge(ExtractHTMLCandidates(html, targetURL, "res-target"))
 	for _, file := range sourceFiles {
 		if file.Error != "" {
 			continue
 		}
 		record := resourceMap[file.URL]
+		if file.SourceType == "sourcemap" {
+			merge(ExtractFromSourceMap(file.Content, file.URL, record.ResourceID))
+			continue
+		}
 		merge(ExtractFromText(file.Content, file.URL, record.ResourceID, file.SourceType))
 	}
 
 	return all
+}
+
+// ExtractHTMLCandidates extracts API-like entries from HTML elements that are not source files.
+func ExtractHTMLCandidates(html string, sourceURL string, sourceResourceID string) []model.ExtractedCandidate {
+	seen := make(map[string]struct{})
+	results := make([]model.ExtractedCandidate, 0)
+	mergeMatches := func(matches [][]string, discoverRule string, hintTags []string) {
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			addCandidateWithHints(match[1], "", hintTags, discoverRule, sourceURL, sourceResourceID, "html", seen, &results)
+		}
+	}
+
+	mergeMatches(iframeSrcPattern.FindAllStringSubmatch(html, -1), "html-iframe-src", []string{"html-entry"})
+	mergeMatches(formActionPattern.FindAllStringSubmatch(html, -1), "html-form-action", []string{"html-entry"})
+	mergeMatches(anchorHrefPattern.FindAllStringSubmatch(html, -1), "html-a-href", []string{"html-link"})
+
+	for _, tag := range metaTagPattern.FindAllString(html, -1) {
+		lower := strings.ToLower(tag)
+		if !strings.Contains(lower, "http-equiv") || !strings.Contains(lower, "refresh") {
+			continue
+		}
+		contentMatch := contentAttrPattern.FindStringSubmatch(tag)
+		if len(contentMatch) < 2 {
+			continue
+		}
+		refreshMatch := refreshURLPattern.FindStringSubmatch(contentMatch[1])
+		if len(refreshMatch) < 2 {
+			continue
+		}
+		addCandidateWithHints(strings.TrimSpace(refreshMatch[1]), "", []string{"html-refresh"}, "html-meta-refresh", sourceURL, sourceResourceID, "html", seen, &results)
+	}
+
+	return preferRicherExtractedCandidates(results)
+}
+
+// ExtractFromSourceMap parses sourcesContent without treating source filenames as API paths.
+func ExtractFromSourceMap(content string, sourceMapURL string, sourceResourceID string) []model.ExtractedCandidate {
+	var payload sourceMapPayload
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return ExtractFromText(content, sourceMapURL, sourceResourceID, "sourcemap")
+	}
+	if len(payload.SourcesContent) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	out := make([]model.ExtractedCandidate, 0)
+	for _, restored := range payload.SourcesContent {
+		items := ExtractFromText(restored, sourceMapURL, sourceResourceID, "restored-source")
+		for _, item := range items {
+			item.SourceType = "restored-source"
+			item.SourceURL = sourceMapURL
+			item.SourceResourceID = sourceResourceID
+			item.DiscoverRule = "sourcemap-sources-content"
+			item.HintTags = mergeStringTags(item.HintTags, []string{"source-map", "restored-source"})
+			key := item.RawValue + "|" + item.MethodHint + "|" + item.DiscoverRule
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func addCandidate(raw string, discoverRule string, sourceURL string, sourceResourceID string, sourceType string, seen map[string]struct{}, results *[]model.ExtractedCandidate) {
@@ -273,6 +358,15 @@ func looksLikeAPI(candidate string) bool {
 	}
 	if strings.HasPrefix(lower, "api/") || strings.HasPrefix(lower, "graphql") || strings.HasPrefix(lower, "rest/") || strings.HasPrefix(lower, "v1/") || strings.HasPrefix(lower, "v2/") {
 		return true
+	}
+	if strings.HasPrefix(candidate, "../") {
+		trimmed := candidate
+		for strings.HasPrefix(trimmed, "../") {
+			trimmed = strings.TrimPrefix(trimmed, "../")
+		}
+		if hasAPISemanticPrefix(trimmed) {
+			return true
+		}
 	}
 	if !strings.HasPrefix(candidate, "/") {
 		if strings.Contains(candidate, "+") && (strings.Contains(lower, "/api") || strings.Contains(lower, "graphql")) {
