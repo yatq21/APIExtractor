@@ -30,8 +30,10 @@ var sensitiveRules = []struct {
 // EnrichAPIResult adds sensitive findings and risk tags to a verified API result.
 func EnrichAPIResult(result model.APIResult, cfg config.Config) model.APIResult {
 	matches := detectSensitiveMatches(result.ResponseSample, result.ContentType)
+	existingHints := append([]string(nil), result.RiskHints...)
 	result.SensitiveMatches = matches
 	result.RiskTags, result.RiskEvidence, result.RiskHints = buildRiskSignals(result, matches, cfg)
+	result.RiskHints = mergeStringTags(existingHints, result.RiskHints)
 	return result
 }
 

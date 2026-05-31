@@ -40,7 +40,7 @@ func NormalizeCandidates(items []model.ExtractedCandidate, baseURL string, sameO
 	results := make([]model.APICandidate, 0, len(items))
 
 	for idx, item := range items {
-		normalized, pathValue, sampleQuery, isParameterized, ok := urlutil.NormalizeForResult(item.RawValue, baseURL, sameOrigin)
+		normalized, pathValue, sampleQuery, isParameterized, usedRootFallback, ok := normalizeExtractedCandidate(item, baseURL, sameOrigin)
 		if !ok {
 			continue
 		}
@@ -62,7 +62,7 @@ func NormalizeCandidates(items []model.ExtractedCandidate, baseURL string, sameO
 			SourceType:       item.SourceType,
 			DiscoverRule:     item.DiscoverRule,
 			SameOrigin:       sameOriginMatch(normalized, baseURL),
-			Confidence:       inferCandidateConfidence(item.RawValue, sampleQuery, isParameterized),
+			Confidence:       inferCandidateConfidence(item.RawValue, item.DiscoverRule, sampleQuery, isParameterized, usedRootFallback),
 			Tags:             mergeStringTags(inferCandidateTags(pathValue, sampleQuery, isParameterized), item.HintTags),
 			IsParameterized:  isParameterized,
 			Path:             pathValue,
@@ -74,6 +74,63 @@ func NormalizeCandidates(items []model.ExtractedCandidate, baseURL string, sameO
 		return results[i].NormalizedURL < results[j].NormalizedURL
 	})
 	return results
+}
+
+func normalizeExtractedCandidate(item model.ExtractedCandidate, targetURL string, sameOrigin bool) (normalizedURL string, normalizedPath string, sampleQuery string, isParameterized bool, usedRootFallback bool, ok bool) {
+	resolutionBase := strings.TrimSpace(item.SourceURL)
+	if resolutionBase == "" {
+		resolutionBase = targetURL
+	}
+
+	if rootValue, fallback := rootNormalizedAPIFallback(item.RawValue); fallback {
+		if normalizedURL, normalizedPath, sampleQuery, isParameterized, ok = normalizeAgainstTargetBoundary(rootValue, targetURL, targetURL, sameOrigin); ok {
+			return normalizedURL, normalizedPath, sampleQuery, isParameterized, true, true
+		}
+	}
+
+	normalizedURL, normalizedPath, sampleQuery, isParameterized, ok = normalizeAgainstTargetBoundary(item.RawValue, resolutionBase, targetURL, sameOrigin)
+	return normalizedURL, normalizedPath, sampleQuery, isParameterized, false, ok
+}
+
+func normalizeAgainstTargetBoundary(raw string, resolutionBase string, targetURL string, sameOrigin bool) (normalizedURL string, normalizedPath string, sampleQuery string, isParameterized bool, ok bool) {
+	normalizedURL, normalizedPath, sampleQuery, isParameterized, ok = urlutil.NormalizeForResult(raw, resolutionBase, false)
+	if !ok {
+		return "", "", "", false, false
+	}
+	if sameOrigin && !sameOriginMatch(normalizedURL, targetURL) {
+		return "", "", "", false, false
+	}
+	return normalizedURL, normalizedPath, sampleQuery, isParameterized, true
+}
+
+func rootNormalizedAPIFallback(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "../") {
+		return "", false
+	}
+
+	for strings.HasPrefix(trimmed, "../") {
+		trimmed = strings.TrimPrefix(trimmed, "../")
+	}
+	trimmed = strings.TrimLeft(trimmed, "/")
+	if !hasAPISemanticPrefix(trimmed) {
+		return "", false
+	}
+	return "/" + trimmed, true
+}
+
+func hasAPISemanticPrefix(raw string) bool {
+	lower := strings.ToLower(strings.TrimLeft(raw, "/"))
+	first := lower
+	if idx := strings.IndexAny(first, "/?"); idx >= 0 {
+		first = first[:idx]
+	}
+	switch first {
+	case "api", "graphql", "auth", "admin", "rest", "v1", "v2":
+		return true
+	default:
+		return false
+	}
 }
 
 func candidateID(index int) string {
@@ -114,9 +171,15 @@ func sameOriginMatch(left string, right string) bool {
 	return strings.EqualFold(leftURL.Scheme, rightURL.Scheme) && strings.EqualFold(leftURL.Host, rightURL.Host)
 }
 
-func inferCandidateConfidence(raw string, sampleQuery string, isParameterized bool) string {
+func inferCandidateConfidence(raw string, discoverRule string, sampleQuery string, isParameterized bool, usedRootFallback bool) string {
 	switch {
+	case usedRootFallback:
+		return "medium"
 	case strings.Contains(raw, "${") || strings.Contains(raw, "+"):
+		return "low"
+	case strings.HasPrefix(strings.TrimSpace(raw), "../") && !isRootAPIPath(raw):
+		return "low"
+	case discoverRule == "html-a-href":
 		return "low"
 	case isParameterized:
 		return "medium"
@@ -125,6 +188,11 @@ func inferCandidateConfidence(raw string, sampleQuery string, isParameterized bo
 	default:
 		return "high"
 	}
+}
+
+func isRootAPIPath(raw string) bool {
+	_, ok := rootNormalizedAPIFallback(raw)
+	return ok
 }
 
 func inferCandidateTags(pathValue string, sampleQuery string, isParameterized bool) []string {
